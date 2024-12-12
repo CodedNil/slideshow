@@ -102,6 +102,8 @@ struct WgpuCtx<'window> {
     front_texture: TextureResources,
     back_texture: TextureResources,
     texture_bind_group_layout: wgpu::BindGroupLayout,
+    texture_bind_group: wgpu::BindGroup,
+    mix_factor_buffer: wgpu::Buffer,
     image_paths: Vec<String>,
     current_image_index: usize,
 }
@@ -240,6 +242,20 @@ impl WgpuCtx<'_> {
         let front_texture = create_texture_resources(&device, &queue, &current_image);
         let back_texture = create_texture_resources(&device, &queue, &next_image);
 
+        let mix_factor_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            size: 8,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+            label: None,
+        });
+        let texture_bind_group = update_bind_groups(
+            &device,
+            &texture_bind_group_layout,
+            &front_texture,
+            &back_texture,
+            &mix_factor_buffer,
+        );
+
         WgpuCtx {
             surface,
             surface_config,
@@ -249,43 +265,43 @@ impl WgpuCtx<'_> {
             front_texture,
             back_texture,
             texture_bind_group_layout,
+            texture_bind_group,
+            mix_factor_buffer,
             image_paths,
             current_image_index: 0,
         }
     }
 
     fn update_textures(&mut self, next_image_index: usize) {
+        std::mem::swap(&mut self.front_texture, &mut self.back_texture);
         self.current_image_index = next_image_index;
         let img_path = &self.image_paths[next_image_index];
         let next_image = image::open(img_path).unwrap();
         self.back_texture = create_texture_resources(&self.device, &self.queue, &next_image);
-    }
 
-    fn swap_buffers(&mut self) {
-        std::mem::swap(&mut self.front_texture, &mut self.back_texture);
+        self.texture_bind_group = update_bind_groups(
+            &self.device,
+            &self.texture_bind_group_layout,
+            &self.front_texture,
+            &self.back_texture,
+            &self.mix_factor_buffer,
+        );
     }
 
     fn draw(&mut self, elapsed_time: f64) {
-        log::info!("draw {}", elapsed_time);
-
         // Track ticker
         let next_image = ((elapsed_time / TIME_BETWEEN_IMAGES) as usize) % self.image_paths.len();
         if next_image != self.current_image_index {
             self.current_image_index = next_image;
-            self.swap_buffers();
             self.update_textures(next_image);
         }
         let transition = (elapsed_time % TIME_BETWEEN_IMAGES) / TRANSITION_TIME;
+        if transition > 1.0 {
+            return;
+        }
 
-        // Create a uniform buffer for the mix factor
-        let mix_factor_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            size: 8,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-            label: None,
-        });
         self.queue.write_buffer(
-            &mix_factor_buffer,
+            &self.mix_factor_buffer,
             0,
             bytemuck::cast_slice(&[transition.min(1.0) as f32]),
         );
@@ -316,47 +332,7 @@ impl WgpuCtx<'_> {
             });
             // Set up pipeline and bind groups
             rpass.set_pipeline(&self.render_pipeline);
-
-            // Set bind group for front and back textures and uniform buffer for mix factor
-            rpass.set_bind_group(
-                0,
-                &self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    layout: &self.texture_bind_group_layout, // Previously defined layout in setup
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(
-                                &self.front_texture.texture_view,
-                            ), // Front texture
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&self.front_texture.sampler), // Front sampler
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::TextureView(
-                                &self.back_texture.texture_view,
-                            ), // Back texture
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: wgpu::BindingResource::Sampler(&self.back_texture.sampler), // Back sampler
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 4,
-                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                                buffer: &mix_factor_buffer,
-                                offset: 0,
-                                size: None,
-                            }), // Mix Factor
-                        },
-                    ],
-                    label: None,
-                }),
-                &[],
-            );
-
+            rpass.set_bind_group(0, &self.texture_bind_group, &[]);
             rpass.draw(0..4, 0..1);
         }
 
@@ -364,6 +340,45 @@ impl WgpuCtx<'_> {
         self.queue.submit(Some(encoder.finish()));
         surface_texture.present();
     }
+}
+
+fn update_bind_groups(
+    device: &wgpu::Device,
+    texture_bind_group_layout: &wgpu::BindGroupLayout,
+    front_texture: &TextureResources,
+    back_texture: &TextureResources,
+    mix_factor_buffer: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        layout: texture_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&front_texture.texture_view), // Front texture
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&front_texture.sampler), // Front sampler
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&back_texture.texture_view), // Back texture
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::Sampler(&back_texture.sampler), // Back sampler
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: mix_factor_buffer,
+                    offset: 0,
+                    size: None,
+                }), // Mix Factor
+            },
+        ],
+        label: None,
+    })
 }
 
 struct TextureResources {
