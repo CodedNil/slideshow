@@ -29,10 +29,18 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     return output;
 }
 
-@group(0) @binding(0) var my_texture: texture_2d<f32>;
-@group(0) @binding(1) var my_sampler: sampler;
+@group(0) @binding(0) var front_texture: texture_2d<f32>;
+@group(0) @binding(1) var front_sampler: sampler;
+@group(0) @binding(2) var back_texture: texture_2d<f32>;
+@group(0) @binding(3) var back_sampler: sampler;
+@group(0) @binding(4) var<uniform> mix_factor: f32;
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(my_texture, my_sampler, input.uv);
+    // Sample colors from both textures
+    let front_color = textureSample(front_texture, front_sampler, input.uv);
+    let back_color = textureSample(back_texture, back_sampler, input.uv);
+    
+    // Mix colors based on mix_factor for fading effect
+    return mix(front_color, back_color, mix_factor);
 }

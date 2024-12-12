@@ -1,7 +1,13 @@
-#![allow(clippy::missing_panics_doc, clippy::must_use_candidate)]
+#![allow(
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::too_many_lines,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 
 use image::GenericImageView;
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, sync::Arc, time::Instant};
 use wgpu::{PipelineCompilationOptions, ShaderSource};
 use winit::{
     application::ApplicationHandler,
@@ -11,6 +17,9 @@ use winit::{
     window::{Window, WindowId},
 };
 
+const TIME_BETWEEN_IMAGES: f64 = 4.0;
+const TRANSITION_TIME: f64 = 1.0;
+
 fn main() -> Result<(), EventLoopError> {
     simple_logger::SimpleLogger::new()
         .with_level(log::LevelFilter::Info)
@@ -18,15 +27,19 @@ fn main() -> Result<(), EventLoopError> {
         .unwrap();
 
     let event_loop = EventLoop::new().unwrap();
-    event_loop.set_control_flow(ControlFlow::Wait);
-    let mut app = App::default();
+    event_loop.set_control_flow(ControlFlow::Poll);
+    let mut app = App {
+        window: None,
+        wgpu_ctx: None,
+        start_time: Instant::now(),
+    };
     event_loop.run_app(&mut app)
 }
 
-#[derive(Default)]
 struct App<'window> {
     window: Option<Arc<Window>>,
     wgpu_ctx: Option<WgpuCtx<'window>>,
+    start_time: Instant,
 }
 
 impl ApplicationHandler for App<'_> {
@@ -57,13 +70,22 @@ impl ApplicationHandler for App<'_> {
                 if let (Some(wgpu_ctx), Some(window)) =
                     (self.wgpu_ctx.as_mut(), self.window.as_ref())
                 {
-                    wgpu_ctx.resize((new_size.width, new_size.height));
+                    wgpu_ctx.surface_config.width = new_size.width.max(1);
+                    wgpu_ctx.surface_config.height = new_size.height.max(1);
+                    wgpu_ctx
+                        .surface
+                        .configure(&wgpu_ctx.device, &wgpu_ctx.surface_config);
                     window.request_redraw();
                 }
             }
             WindowEvent::RedrawRequested => {
                 if let Some(wgpu_ctx) = self.wgpu_ctx.as_mut() {
-                    wgpu_ctx.draw();
+                    wgpu_ctx.draw(self.start_time.elapsed().as_secs_f64());
+
+                    // Ensure continuous request for redraw
+                    if let Some(window) = &self.window {
+                        window.request_redraw();
+                    }
                 }
             }
             _ => (),
@@ -77,7 +99,11 @@ struct WgpuCtx<'window> {
     device: wgpu::Device,
     queue: wgpu::Queue,
     render_pipeline: wgpu::RenderPipeline,
-    texture_bind_group: wgpu::BindGroup,
+    front_texture: TextureResources,
+    back_texture: TextureResources,
+    texture_bind_group_layout: wgpu::BindGroupLayout,
+    image_paths: Vec<String>,
+    current_image_index: usize,
 }
 
 impl WgpuCtx<'_> {
@@ -113,14 +139,63 @@ impl WgpuCtx<'_> {
             label: None,
         });
 
-        let img = image::open("src/img.jpg").unwrap();
-        let (_texture, _sampler, texture_bind_group, bind_group_layout) =
-            create_texture_and_sampler(&device, &queue, &img);
+        let texture_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[
+                // Binding for the first texture
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // Binding for the first sampler
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // Binding for the second texture
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // Binding for the second sampler
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // Binding for the mix factor uniform buffer
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<f32>() as _),
+                    },
+                    count: None,
+                },
+            ],
+            label: None,
+        });
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             layout: Some(
                 &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    bind_group_layouts: &[&bind_group_layout],
+                    bind_group_layouts: &[&texture_bind_group_layout],
                     push_constant_ranges: &[],
                     label: None,
                 }),
@@ -155,32 +230,85 @@ impl WgpuCtx<'_> {
             label: None,
         });
 
+        let image_paths = std::fs::read_dir("images")
+            .unwrap()
+            .filter_map(|entry| entry.ok().map(|e| e.path().to_str().unwrap().to_owned()))
+            .collect::<Vec<_>>();
+
+        // Ensure there are available images
+        assert!(
+            !image_paths.is_empty(),
+            "No images found in 'images' directory"
+        );
+
+        let current_image = image::open(&image_paths[0]).unwrap();
+        let next_image = image::open(&image_paths[1]).unwrap();
+
+        let front_texture = create_texture_resources(&device, &queue, &current_image);
+        let back_texture = create_texture_resources(&device, &queue, &next_image);
+
         WgpuCtx {
             surface,
             surface_config,
             device,
             queue,
             render_pipeline,
-            texture_bind_group,
+            front_texture,
+            back_texture,
+            texture_bind_group_layout,
+            image_paths,
+            current_image_index: 0,
         }
     }
 
-    fn resize(&mut self, new_size: (u32, u32)) {
-        let (width, height) = new_size;
-        self.surface_config.width = width.max(1);
-        self.surface_config.height = height.max(1);
-        self.surface.configure(&self.device, &self.surface_config);
+    fn update_textures(&mut self, next_image_index: usize) {
+        self.current_image_index = next_image_index;
+        let img_path = &self.image_paths[next_image_index];
+        let next_image = image::open(img_path).unwrap();
+        self.back_texture = create_texture_resources(&self.device, &self.queue, &next_image);
     }
 
-    fn draw(&self) {
-        log::info!("draw");
+    fn swap_buffers(&mut self) {
+        std::mem::swap(&mut self.front_texture, &mut self.back_texture);
+    }
+
+    fn draw(&mut self, elapsed_time: f64) {
+        log::info!("draw {}", elapsed_time);
+
+        // Track ticker
+        let next_image = ((elapsed_time / TIME_BETWEEN_IMAGES) as usize) % self.image_paths.len();
+        if next_image != self.current_image_index {
+            self.current_image_index = next_image;
+            self.swap_buffers();
+            self.update_textures(next_image);
+        }
+        let transition = (elapsed_time % TIME_BETWEEN_IMAGES) / TRANSITION_TIME;
+
+        // Create a uniform buffer for the mix factor
+        let mix_factor_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            size: 8,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+            label: None,
+        });
+        self.queue.write_buffer(
+            &mix_factor_buffer,
+            0,
+            bytemuck::cast_slice(&[transition.min(1.0) as f32]),
+        );
+
+        // Acquire the current texture for rendering
         let surface_texture = self.surface.get_current_texture().unwrap();
         let texture_view = surface_texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Start the command encoder
         let mut encoder = self
             .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+
+        // Begin the render pass
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -193,28 +321,70 @@ impl WgpuCtx<'_> {
                 occlusion_query_set: None,
                 label: None,
             });
+            // Set up pipeline and bind groups
             rpass.set_pipeline(&self.render_pipeline);
-            rpass.set_bind_group(0, &self.texture_bind_group, &[]);
+
+            // Set bind group for front and back textures and uniform buffer for mix factor
+            rpass.set_bind_group(
+                0,
+                &self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    layout: &self.texture_bind_group_layout, // Previously defined layout in setup
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(
+                                &self.front_texture.texture_view,
+                            ), // Front texture
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&self.front_texture.sampler), // Front sampler
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(
+                                &self.back_texture.texture_view,
+                            ), // Back texture
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::Sampler(&self.back_texture.sampler), // Back sampler
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &mix_factor_buffer,
+                                offset: 0,
+                                size: None,
+                            }), // Mix Factor
+                        },
+                    ],
+                    label: None,
+                }),
+                &[],
+            );
+
             rpass.draw(0..4, 0..1);
         }
+
+        // Submit the commands for rendering
         self.queue.submit(Some(encoder.finish()));
         surface_texture.present();
     }
 }
 
-fn create_texture_and_sampler(
+struct TextureResources {
+    texture_view: wgpu::TextureView,
+    sampler: wgpu::Sampler,
+}
+
+fn create_texture_resources(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     image: &image::DynamicImage,
-) -> (
-    wgpu::Texture,
-    wgpu::Sampler,
-    wgpu::BindGroup,
-    wgpu::BindGroupLayout,
-) {
+) -> TextureResources {
     let rgba = image.to_rgba8();
     let dimensions = image.dimensions();
-
     let texture_size = wgpu::Extent3d {
         width: dimensions.0,
         height: dimensions.1,
@@ -248,6 +418,8 @@ fn create_texture_and_sampler(
         texture_size,
     );
 
+    let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
         mag_filter: wgpu::FilterMode::Linear,
         min_filter: wgpu::FilterMode::Linear,
@@ -255,44 +427,8 @@ fn create_texture_and_sampler(
         ..Default::default()
     });
 
-    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
-        label: None,
-    });
-
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        layout: &bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(
-                    &texture.create_view(&wgpu::TextureViewDescriptor::default()),
-                ),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-        ],
-        label: None,
-    });
-
-    (texture, sampler, bind_group, bind_group_layout)
+    TextureResources {
+        texture_view,
+        sampler,
+    }
 }

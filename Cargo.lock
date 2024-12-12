@@ -1270,6 +1270,7 @@ dependencies = [
 name = "slideshow"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "image",
  "log",
  "pollster",
