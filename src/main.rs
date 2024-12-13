@@ -210,10 +210,7 @@ impl WgpuCtx<'_> {
                 compilation_options: PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_config.format,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent::REPLACE,
-                        alpha: wgpu::BlendComponent::REPLACE,
-                    }),
+                    blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -221,8 +218,8 @@ impl WgpuCtx<'_> {
                 topology: wgpu::PrimitiveTopology::TriangleStrip,
                 ..Default::default()
             },
-            depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
+            depth_stencil: None,
             multiview: None,
             cache: None,
             label: None,
@@ -294,11 +291,15 @@ impl WgpuCtx<'_> {
     fn draw(&mut self, elapsed_time: f64) {
         // Track ticker
         let next_image = ((elapsed_time / TIME_BETWEEN_IMAGES) as usize) % self.image_paths.len();
-        if next_image != self.current_image_index {
+        let needs_update = next_image != self.current_image_index;
+        if needs_update {
             self.current_image_index = next_image;
             self.update_textures(next_image);
         }
         let transition = (elapsed_time % TIME_BETWEEN_IMAGES) / TRANSITION_TIME;
+        if transition > 1.0 || needs_update {
+            return;
+        }
 
         self.queue.write_buffer(
             &self.mix_factor_buffer,
@@ -392,10 +393,10 @@ fn create_texture_resources(
     image: &image::DynamicImage,
 ) -> TextureResources {
     let rgba = image.to_rgba8();
-    let dimensions = image.dimensions();
+    let (width, height) = image.dimensions();
     let texture_size = wgpu::Extent3d {
-        width: dimensions.0,
-        height: dimensions.1,
+        width,
+        height,
         depth_or_array_layers: 1,
     };
 
@@ -420,20 +421,14 @@ fn create_texture_resources(
         &rgba,
         wgpu::ImageDataLayout {
             offset: 0,
-            bytes_per_row: Some(4 * dimensions.0),
-            rows_per_image: Some(dimensions.1),
+            bytes_per_row: Some(4 * width),
+            rows_per_image: Some(height),
         },
         texture_size,
     );
 
     let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::FilterMode::Nearest,
-        ..Default::default()
-    });
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
 
     TextureResources {
         texture_view,
