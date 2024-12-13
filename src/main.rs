@@ -297,7 +297,7 @@ impl WgpuCtx<'_> {
             self.update_textures(next_image);
         }
         let transition = (elapsed_time % TIME_BETWEEN_IMAGES) / TRANSITION_TIME;
-        if transition > 1.0 || needs_update {
+        if transition > 1.0 && !needs_update {
             return;
         }
 
