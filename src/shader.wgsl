@@ -37,13 +37,17 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    if (mix_factor <= 0.0) {
-        return textureSample(front_texture, front_sampler, input.uv);
-    } else if (mix_factor >= 1.0) {
-        return textureSample(back_texture, back_sampler, input.uv);
-    }
-    
     let front_color = textureSample(front_texture, front_sampler, input.uv);
     let back_color = textureSample(back_texture, back_sampler, input.uv);
+
+    // Directly return based on mix factor for simple cases
+    if (mix_factor <= 0.0) { 
+        return front_color;
+    }
+    if (mix_factor >= 1.0) {
+        return back_color;
+    }
+
+    // Mix colors based on mix_factor
     return mix(front_color, back_color, mix_factor);
 }

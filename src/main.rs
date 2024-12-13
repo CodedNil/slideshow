@@ -292,7 +292,6 @@ impl WgpuCtx<'_> {
     }
 
     fn draw(&mut self, elapsed_time: f64) {
-        let start = std::time::Instant::now();
         // Track ticker
         let next_image = ((elapsed_time / TIME_BETWEEN_IMAGES) as usize) % self.image_paths.len();
         if next_image != self.current_image_index {
@@ -300,19 +299,12 @@ impl WgpuCtx<'_> {
             self.update_textures(next_image);
         }
         let transition = (elapsed_time % TIME_BETWEEN_IMAGES) / TRANSITION_TIME;
-        log::info!("Calculations took {:?}", start.elapsed());
-        // if transition > 1.0 {
-        //     return;
-        // }
-        let start = std::time::Instant::now();
 
         self.queue.write_buffer(
             &self.mix_factor_buffer,
             0,
             bytemuck::cast_slice(&[transition.min(1.0) as f32]),
         );
-        log::info!("Buffer took {:?}", start.elapsed());
-        let start = std::time::Instant::now();
 
         // Acquire the current texture for rendering
         let surface_texture = self.surface.get_current_texture().unwrap();
@@ -320,16 +312,10 @@ impl WgpuCtx<'_> {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        log::info!("View took {:?}", start.elapsed());
-        let start = std::time::Instant::now();
-
         // Start the command encoder
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-
-        log::info!("Encoder took {:?}", start.elapsed());
-        let start = std::time::Instant::now();
 
         // Begin the render pass
         {
@@ -349,15 +335,10 @@ impl WgpuCtx<'_> {
             rpass.set_bind_group(0, &self.texture_bind_group, &[]);
             rpass.draw(0..4, 0..1);
         }
-        log::info!("Rpass took {:?}", start.elapsed());
-        let start = std::time::Instant::now();
 
         // Submit the commands for rendering
         self.queue.submit(Some(encoder.finish()));
-        log::info!("Queue took {:?}", start.elapsed());
-        let start = std::time::Instant::now();
         surface_texture.present();
-        log::info!("Present took {:?}", start.elapsed());
     }
 }
 
