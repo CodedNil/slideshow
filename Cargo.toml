@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 log = "0.4.22"
 simple_logger = "5.0.0"
+bytemuck = "1.20.0"
 
 pollster = "0.4.0"
 winit = { version = "0.30.5", default-features = false, features = [
@@ -14,7 +15,6 @@ winit = { version = "0.30.5", default-features = false, features = [
 ] }
 wgpu = { version = "23.0.1", default-features = false, features = ["wgsl"] }
 image = { version = "0.25.5", default-features = false, features = ["jpeg"] }
-bytemuck = "1.20.0"
 
 [profile.release]
 opt-level = 3
