@@ -1,6 +1,7 @@
 ssh adept@pizeromh.local
 adept
 
+ssh adept@pizeromh.local "rm /home/adept/slideshow"
 scp slideshow adept@pizeromh.local:/home/adept
 
 mkdir -p ~/.config/sway
