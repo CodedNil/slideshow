@@ -1,6 +1,4 @@
 #![allow(
-    clippy::missing_panics_doc,
-    clippy::must_use_candidate,
     clippy::too_many_lines,
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss
@@ -309,7 +307,7 @@ impl WgpuCtx<'_> {
             self.update_textures(next_image);
         }
         let transition = (elapsed_time % TIME_BETWEEN_IMAGES) / TRANSITION_TIME;
-        if transition > 1.0 && !needs_update {
+        if transition > 1.5 && !needs_update {
             return;
         }
 

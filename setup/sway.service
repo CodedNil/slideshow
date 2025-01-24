@@ -1,0 +1,13 @@
+[Unit]
+Description=Sway Compositor
+After=graphical.target
+
+[Service]
+ExecStart=/usr/bin/sway
+Restart=always
+User=adept
+Environment="XDG_RUNTIME_DIR=/run/user/1000"
+WorkingDirectory=/home/adept
+
+[Install]
+WantedBy=graphical.target

@@ -1,0 +1,11 @@
+ssh adept@pizeromh.local
+adept
+
+scp slideshow adept@pizeromh.local:/home/adept
+
+mkdir -p ~/.config/sway
+touch ~/.config/sway/config
+
+sudo nano /etc/systemd/system/sway.service
+sudo systemctl enable sway.service
+sudo systemctl start sway.service
