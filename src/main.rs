@@ -12,7 +12,8 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use image::GenericImageView;
 use std::{
     borrow::Cow,
-    fs, io,
+    fs,
+    io::Cursor,
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
@@ -35,11 +36,6 @@ const TIME_BETWEEN_IMAGES: f64 = 4.0;
 const TRANSITION_TIME: f64 = 1.0;
 
 fn main() -> Result<(), EventLoopError> {
-    simple_logger::SimpleLogger::new()
-        .with_level(log::LevelFilter::Info)
-        .init()
-        .unwrap();
-
     ensure_latest_images().unwrap();
 
     let event_loop = EventLoop::new().unwrap();
@@ -454,48 +450,33 @@ fn create_texture_resources(
 
 fn ensure_latest_images() -> Result<(), Box<dyn std::error::Error>> {
     let zip_path = Path::new(IMAGE_ZIP_PATH);
-
-    let fetch = if zip_path.exists() {
-        let metadata = fs::metadata(zip_path)?;
-        let modified = metadata.modified()?;
-        modified.elapsed()? > Duration::from_secs(3600)
-    } else {
-        true
-    };
-
-    // Download ZIP and save it locally if necessary
-    if fetch {
-        let client = reqwest::blocking::Client::builder()
-            .danger_accept_invalid_certs(true)
-            .build()?;
-        let response = client.get(IMAGE_ZIP_URL).send()?;
-        let bytes = response.bytes()?;
-        fs::write(zip_path, bytes)?;
-
-        // Clear the images directory
-        if Path::new(IMAGE_DIR_PATH).exists() {
-            fs::remove_dir_all(IMAGE_DIR_PATH)?;
+    if zip_path.exists() {
+        let modified = fs::metadata(zip_path)?.modified()?;
+        if modified.elapsed()? <= Duration::from_secs(3600) {
+            return Ok(());
         }
-        fs::create_dir_all(IMAGE_DIR_PATH)?;
+    }
 
-        // Extract ZIP contents into the images directory
-        let file = fs::File::open(IMAGE_ZIP_PATH)?;
-        let mut zip = ZipArchive::new(file)?;
+    // Download ZIP
+    let client = reqwest::blocking::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()?;
+    let bytes = client.get(IMAGE_ZIP_URL).send()?.bytes()?;
 
-        for i in 0..zip.len() {
-            let mut file = zip.by_index(i)?;
-            let outpath = Path::new(IMAGE_DIR_PATH).join(file.name());
+    // Write the ZIP archive to disk
+    fs::write(zip_path, &bytes)?;
 
-            if file.name().ends_with('/') {
-                fs::create_dir_all(&outpath)?;
-            } else {
-                if let Some(parent) = outpath.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                let mut outfile = fs::File::create(&outpath)?;
-                io::copy(&mut file, &mut outfile)?;
-            }
-        }
+    // Clear the images directory
+    if Path::new(IMAGE_DIR_PATH).exists() {
+        fs::remove_dir_all(IMAGE_DIR_PATH)?;
+    }
+    fs::create_dir_all(IMAGE_DIR_PATH)?;
+
+    let mut zip = ZipArchive::new(Cursor::new(bytes))?;
+    for i in 0..zip.len() {
+        let mut file = zip.by_index(i)?;
+        let mut outfile = fs::File::create(Path::new(IMAGE_DIR_PATH).join(file.name()))?;
+        std::io::copy(&mut file, &mut outfile)?;
     }
 
     Ok(())

@@ -4,12 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-log = "0.4.25"
-simple_logger = "5.0.0"
-bytemuck = "1.21.0"
-
 mimalloc = "0.1.43"
-
+bytemuck = "1.21.0"
 pollster = "0.4.0"
 winit = { version = "0.30.8", default-features = false, features = [
     "wayland",
@@ -17,14 +13,9 @@ winit = { version = "0.30.8", default-features = false, features = [
 ] }
 wgpu = { version = "24.0.1", default-features = false, features = ["wgsl"] }
 image = { version = "0.25.5", default-features = false, features = ["jpeg"] }
-
 reqwest = { version = "0.12.12", default-features = false, features = [
     "blocking",
     "rustls-tls",
-] }
-ureq = { version = "2.11.0", default-features = false, features = [
-    "tls",
-    "json",
 ] }
 zip = "2.2.2"
 
