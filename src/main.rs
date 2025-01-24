@@ -6,8 +6,17 @@
     clippy::cast_sign_loss
 )]
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use image::GenericImageView;
-use std::{borrow::Cow, sync::Arc, time::Instant};
+use std::{
+    borrow::Cow,
+    fs, io,
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use wgpu::{PipelineCompilationOptions, ShaderSource};
 use winit::{
     application::ApplicationHandler,
@@ -16,6 +25,11 @@ use winit::{
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Window, WindowId},
 };
+use zip::ZipArchive;
+
+const IMAGE_ZIP_URL: &str = "http://m.adept.care/display_tv/MH.zip";
+const IMAGE_ZIP_PATH: &str = "images.zip";
+const IMAGE_DIR_PATH: &str = "images";
 
 const TIME_BETWEEN_IMAGES: f64 = 4.0;
 const TRANSITION_TIME: f64 = 1.0;
@@ -25,6 +39,8 @@ fn main() -> Result<(), EventLoopError> {
         .with_level(log::LevelFilter::Info)
         .init()
         .unwrap();
+
+    ensure_latest_images().unwrap();
 
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -434,4 +450,53 @@ fn create_texture_resources(
         texture_view,
         sampler,
     }
+}
+
+fn ensure_latest_images() -> Result<(), Box<dyn std::error::Error>> {
+    let zip_path = Path::new(IMAGE_ZIP_PATH);
+
+    let fetch = if zip_path.exists() {
+        let metadata = fs::metadata(zip_path)?;
+        let modified = metadata.modified()?;
+        modified.elapsed()? > Duration::from_secs(3600)
+    } else {
+        true
+    };
+
+    // Download ZIP and save it locally if necessary
+    if fetch {
+        let client = reqwest::blocking::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .build()?;
+        let response = client.get(IMAGE_ZIP_URL).send()?;
+        let bytes = response.bytes()?;
+        fs::write(zip_path, bytes)?;
+
+        // Clear the images directory
+        if Path::new(IMAGE_DIR_PATH).exists() {
+            fs::remove_dir_all(IMAGE_DIR_PATH)?;
+        }
+        fs::create_dir_all(IMAGE_DIR_PATH)?;
+
+        // Extract ZIP contents into the images directory
+        let file = fs::File::open(IMAGE_ZIP_PATH)?;
+        let mut zip = ZipArchive::new(file)?;
+
+        for i in 0..zip.len() {
+            let mut file = zip.by_index(i)?;
+            let outpath = Path::new(IMAGE_DIR_PATH).join(file.name());
+
+            if file.name().ends_with('/') {
+                fs::create_dir_all(&outpath)?;
+            } else {
+                if let Some(parent) = outpath.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                let mut outfile = fs::File::create(&outpath)?;
+                io::copy(&mut file, &mut outfile)?;
+            }
+        }
+    }
+
+    Ok(())
 }
