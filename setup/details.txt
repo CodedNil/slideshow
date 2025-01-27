@@ -1,12 +1,19 @@
-ssh adept@pizeromh.local
+ssh adept@adept-pi3.local
 adept
 
-ssh adept@pizeromh.local "rm /home/adept/slideshow"
-scp slideshow adept@pizeromh.local:/home/adept
+ssh adept@adept-pi3.local "rm /home/adept/slideshow"
+scp ~/Downloads/slideshow adept@adept-pi3.local:/home/adept
 
 mkdir -p ~/.config/sway
-touch ~/.config/sway/config
+nano ~/.config/sway/config
 
 sudo nano /etc/systemd/system/sway.service
 sudo systemctl enable sway.service
 sudo systemctl start sway.service
+
+sudo rpi-update
+sudo apt install sway seatd mesa-vulkan-drivers
+sudo usermod -aG video,input,tty adept
+
+Setup auto login
+sudo bash -c 'mkdir -p /etc/systemd/system/getty@tty1.service.d && echo -e "[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin <username> --noclear %I \$TERM" > /etc/systemd/system/getty@tty1.service.d/override.conf && systemctl daemon-reload && systemctl enable getty@tty1.service'

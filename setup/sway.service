@@ -1,13 +1,15 @@
 [Unit]
 Description=Sway Compositor
-After=graphical.target
+After=network.target graphical.target
 
 [Service]
+ExecStartPre=/bin/sleep 5
 ExecStart=/usr/bin/sway
 Restart=always
+RestartSec=5
 User=adept
 Environment="XDG_RUNTIME_DIR=/run/user/1000"
 WorkingDirectory=/home/adept
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target
