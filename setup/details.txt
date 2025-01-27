@@ -10,6 +10,8 @@ nano ~/.config/sway/config
 sudo nano /etc/systemd/system/sway.service
 sudo systemctl enable sway.service
 sudo systemctl start sway.service
+sudo systemctl enable sway.timer
+sudo systemctl start sway.timer
 
 sudo rpi-update
 sudo apt install sway seatd mesa-vulkan-drivers

@@ -34,8 +34,10 @@ const TIME_BETWEEN_IMAGES: f64 = 4.0;
 const TRANSITION_TIME: f64 = 1.0;
 
 fn main() -> Result<(), EventLoopError> {
+    // Grab new images on startup
     ensure_latest_images().unwrap();
 
+    // Start the event loop
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App {
@@ -235,7 +237,7 @@ impl WgpuCtx<'_> {
             label: None,
         });
 
-        let image_paths = std::fs::read_dir("images")
+        let image_paths = std::fs::read_dir(IMAGE_DIR_PATH)
             .unwrap()
             .filter_map(|entry| entry.ok().map(|e| e.path().to_str().unwrap().to_owned()))
             .collect::<Vec<_>>();
