@@ -1,21 +1,46 @@
+adept-piz2
+adept-pi3
+adept-pi5
+
 ssh adept@adept-pi3.local
 adept
 
 ssh adept@adept-pi3.local "rm /home/adept/slideshow"
 scp ~/Downloads/slideshow adept@adept-pi3.local:/home/adept
 
-mkdir -p ~/.config/sway
-nano ~/.config/sway/config
+mkdir -p ~/.config/sway && nano ~/.config/sway/config
 
-sudo nano /etc/systemd/system/sway.service
-sudo systemctl enable sway.service
-sudo systemctl start sway.service
-sudo systemctl enable sway.timer
-sudo systemctl start sway.timer
-
-sudo rpi-update
+sudo apt update && sudo apt upgrade && sudo apt dist-upgrade
 sudo apt install sway seatd mesa-vulkan-drivers
 sudo usermod -aG video,input,tty adept
 
+sudo nano /etc/systemd/system/sway.service
+sudo systemctl enable sway.service && sudo systemctl start sway.service
+sudo nano /etc/systemd/system/sway.timer
+sudo systemctl enable sway.timer && sudo systemctl start sway.timer
+
 Setup auto login
-sudo bash -c 'mkdir -p /etc/systemd/system/getty@tty1.service.d && echo -e "[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin <username> --noclear %I \$TERM" > /etc/systemd/system/getty@tty1.service.d/override.conf && systemctl daemon-reload && systemctl enable getty@tty1.service'
+sudo bash -c 'mkdir -p /etc/systemd/system/getty@tty1.service.d && echo -e "[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin adept --noclear %I \$TERM" > /etc/systemd/system/getty@tty1.service.d/override.conf && systemctl daemon-reload && systemctl enable getty@tty1.service'
+
+
+sudo nano /boot/firmware/config.txt
+
+Pi Zero 2 OC
+arm_freq=1400 #1000
+core_freq=550 #400
+over_voltage=6 #0
+gpu_freq=550 #400
+
+Pi 3 OC
+gpu_mem=128
+kernel=zImage
+arm_freq=1375
+core_freq=525
+gpu_freq=525
+over_voltage=3
+force_turbo=1
+sdram_freq=625
+sdram_schmoo=0x02000020
+over_voltage_sdram_p=4
+over_voltage_sdram_i=3
+over_voltage_sdram_c=3

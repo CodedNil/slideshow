@@ -16,7 +16,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use wgpu::{PipelineCompilationOptions, ShaderSource};
+use wgpu::{LoadOp, PipelineCompilationOptions, ShaderSource, StoreOp};
 use winit::{
     application::ApplicationHandler,
     error::EventLoopError,
@@ -344,7 +344,10 @@ impl WgpuCtx<'_> {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &texture_view,
                     resolve_target: None,
-                    ops: wgpu::Operations::default(),
+                    ops: wgpu::Operations {
+                        load: LoadOp::default(),
+                        store: StoreOp::Discard,
+                    },
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
