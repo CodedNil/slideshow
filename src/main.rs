@@ -30,8 +30,10 @@ const IMAGE_ZIP_URL: &str = "http://m.adept.care/display_tv/MH.zip";
 const IMAGE_ZIP_PATH: &str = "images.zip";
 const IMAGE_DIR_PATH: &str = "images";
 
-const TIME_BETWEEN_IMAGES: f64 = 4.0;
+const TIME_BETWEEN_IMAGES: f64 = 3.0;
 const TRANSITION_TIME: f64 = 1.0;
+
+const WAIT_TIME: Duration = Duration::from_millis(50); // Frame time between refreshes
 
 fn main() -> Result<(), EventLoopError> {
     // Grab new images on startup
@@ -39,13 +41,11 @@ fn main() -> Result<(), EventLoopError> {
 
     // Start the event loop
     let event_loop = EventLoop::new().unwrap();
-    event_loop.set_control_flow(ControlFlow::Poll);
-    let mut app = App {
+    event_loop.run_app(&mut App {
         window: None,
         wgpu_ctx: None,
         start_time: Instant::now(),
-    };
-    event_loop.run_app(&mut app)
+    })
 }
 
 struct App<'window> {
@@ -68,6 +68,13 @@ impl ApplicationHandler for App<'_> {
             );
             self.window = Some(Arc::clone(&window));
             self.wgpu_ctx = Some(WgpuCtx::new(&window));
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + WAIT_TIME));
+        if let Some(wgpu_ctx) = self.wgpu_ctx.as_mut() {
+            wgpu_ctx.draw(self.start_time.elapsed().as_secs_f64());
         }
     }
 
@@ -96,11 +103,6 @@ impl ApplicationHandler for App<'_> {
             WindowEvent::RedrawRequested => {
                 if let Some(wgpu_ctx) = self.wgpu_ctx.as_mut() {
                     wgpu_ctx.draw(self.start_time.elapsed().as_secs_f64());
-
-                    // Ensure continuous request for redraw
-                    if let Some(window) = &self.window {
-                        window.request_redraw();
-                    }
                 }
             }
             _ => (),

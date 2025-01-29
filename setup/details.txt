@@ -1,3 +1,18 @@
+birthday
+menus slide
+our team, manager etc
+employee of the month
+recent awards
+find us on facebook
+5 star review
+upcoming activities x2
+around our home photos x4
+
+have alternating images, employee of the month doesnt need to show on every loop
+
+10 seconds, 15 max
+
+
 adept-piz2
 adept-pi3
 adept-pi5
@@ -34,10 +49,10 @@ gpu_freq=550 #400
 Pi 3 OC
 gpu_mem=128
 kernel=zImage
-arm_freq=1375
-core_freq=525
+arm_freq=1450
+core_freq=550
 gpu_freq=525
-over_voltage=3
+over_voltage=6
 force_turbo=1
 sdram_freq=625
 sdram_schmoo=0x02000020
