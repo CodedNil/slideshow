@@ -30,10 +30,10 @@ const IMAGE_ZIP_URL: &str = "http://m.adept.care/display_tv/MH.zip";
 const IMAGE_ZIP_PATH: &str = "images.zip";
 const IMAGE_DIR_PATH: &str = "images";
 
-const TIME_BETWEEN_IMAGES: f64 = 3.0;
+const TIME_BETWEEN_IMAGES: f64 = 10.0;
 const TRANSITION_TIME: f64 = 1.0;
 
-const WAIT_TIME: Duration = Duration::from_millis(50); // Frame time between refreshes
+const WAIT_TIME: Duration = Duration::from_millis(66); // Frame time between refreshes
 
 fn main() -> Result<(), EventLoopError> {
     // Grab new images on startup
@@ -72,10 +72,46 @@ impl ApplicationHandler for App<'_> {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + WAIT_TIME));
-        if let Some(wgpu_ctx) = self.wgpu_ctx.as_mut() {
-            wgpu_ctx.draw(self.start_time.elapsed().as_secs_f64());
+        let start_time = Instant::now();
+        let elapsed = self.start_time.elapsed().as_secs_f64();
+        let cycle_position = elapsed % TIME_BETWEEN_IMAGES;
+        let in_transition = cycle_position >= (TIME_BETWEEN_IMAGES - TRANSITION_TIME);
+
+        // Calculate next wake time
+        let next_wake = if in_transition {
+            // Wake more frequently during transition (every WAIT_TIME)
+            Instant::now() + WAIT_TIME
+        } else {
+            // Wake at transition start with small buffer
+            let next_transition =
+                elapsed - cycle_position + (TIME_BETWEEN_IMAGES - TRANSITION_TIME);
+            self.start_time + Duration::from_secs_f64(next_transition) + WAIT_TIME * 2
+        };
+
+        // Update image if needed
+        let update_start = Instant::now();
+        let wgpu_ctx = self.wgpu_ctx.as_mut().unwrap();
+        let next_image = ((elapsed / TIME_BETWEEN_IMAGES) as usize) % wgpu_ctx.image_paths.len();
+        if next_image != wgpu_ctx.current_image_index {
+            wgpu_ctx.update_textures(next_image);
         }
+        let update_duration = update_start.elapsed();
+
+        event_loop.set_control_flow(ControlFlow::WaitUntil(next_wake));
+
+        let draw_start = Instant::now();
+        if let Some(wgpu_ctx) = self.wgpu_ctx.as_mut() {
+            wgpu_ctx.draw(elapsed);
+        }
+        let draw_duration = draw_start.elapsed();
+
+        let total_duration = start_time.elapsed();
+        println!(
+            "about_to_wait: {:.2}ms (update: {:.2}ms, draw: {:.2}ms)",
+            total_duration.as_secs_f64() * 1000.0,
+            update_duration.as_secs_f64() * 1000.0,
+            draw_duration.as_secs_f64() * 1000.0
+        );
     }
 
     fn window_event(
@@ -294,7 +330,25 @@ impl WgpuCtx<'_> {
 
         if (width, height) == self.back_texture_size {
             // Reuse existing texture
-            write_to_existing_texture(&self.queue, &self.back_texture.texture, &next_image);
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.back_texture.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &next_image.to_rgba8(),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * width),
+                    rows_per_image: Some(height),
+                },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
         } else {
             // Create new texture
             self.back_texture = create_texture_resources(&self.device, &self.queue, &next_image);
@@ -310,35 +364,29 @@ impl WgpuCtx<'_> {
         );
     }
 
-    fn draw(&mut self, elapsed_time: f64) {
-        // Track ticker
-        let next_image = ((elapsed_time / TIME_BETWEEN_IMAGES) as usize) % self.image_paths.len();
-        let needs_update = next_image != self.current_image_index;
-        if needs_update {
-            self.current_image_index = next_image;
-            self.update_textures(next_image);
-        }
-        let transition = (elapsed_time % TIME_BETWEEN_IMAGES) / TRANSITION_TIME;
-        if transition > 1.5 && !needs_update {
-            return;
-        }
+    fn draw(&self, elapsed: f64) {
+        let total_start = Instant::now();
 
-        // Acquire the current texture for rendering
+        // Acquire surface texture
+        let texture_start = Instant::now();
         let surface_texture = self.surface.get_current_texture().unwrap();
-        let texture_view = surface_texture
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let texture_time = texture_start.elapsed();
 
-        // Start the command encoder
+        // Create command encoder
+        let encoder_start = Instant::now();
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let encoder_time = encoder_start.elapsed();
 
         // Begin the render pass
+        let render_pass_start = Instant::now();
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &texture_view,
+                    view: &surface_texture
+                        .texture
+                        .create_view(&wgpu::TextureViewDescriptor::default()),
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: LoadOp::default(),
@@ -353,18 +401,41 @@ impl WgpuCtx<'_> {
             // Set up pipeline and bind groups
             rpass.set_pipeline(&self.render_pipeline);
             rpass.set_bind_group(0, &self.texture_bind_group, &[]);
+
+            let transition = ((elapsed % TIME_BETWEEN_IMAGES)
+                - (TIME_BETWEEN_IMAGES - TRANSITION_TIME))
+                / TRANSITION_TIME;
+            let transition = transition.clamp(0.0, 1.0) as f32;
             rpass.set_push_constants(
                 wgpu::ShaderStages::FRAGMENT,
                 0,
-                bytemuck::cast_slice(&[transition.min(1.0) as f32]),
+                bytemuck::cast_slice(&[transition]),
             );
 
             rpass.draw(0..4, 0..1);
         }
+        let render_pass_time = render_pass_start.elapsed();
 
-        // Submit the commands for rendering
+        // Submit commands
+        let submit_start = Instant::now();
         self.queue.submit(Some(encoder.finish()));
+        let submit_time = submit_start.elapsed();
+
+        // Present frame
+        let present_start = Instant::now();
         surface_texture.present();
+        let present_time = present_start.elapsed();
+
+        let total_time = total_start.elapsed();
+        println!(
+            "Draw: {:.2}ms (tex: {:.2}, enc: {:.2}, pass: {:.2}, sub: {:.2}, pres: {:.2})",
+            total_time.as_secs_f64() * 1000.0,
+            texture_time.as_secs_f64() * 1000.0,
+            encoder_time.as_secs_f64() * 1000.0,
+            render_pass_time.as_secs_f64() * 1000.0,
+            submit_time.as_secs_f64() * 1000.0,
+            present_time.as_secs_f64() * 1000.0
+        );
     }
 }
 
@@ -445,33 +516,6 @@ fn create_texture_resources(
         texture,
         texture_view,
     }
-}
-
-fn write_to_existing_texture(
-    queue: &wgpu::Queue,
-    texture: &wgpu::Texture,
-    image: &image::DynamicImage,
-) {
-    let (width, height) = image.dimensions();
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        &image.to_rgba8(),
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(4 * width),
-            rows_per_image: Some(height),
-        },
-        wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-    );
 }
 
 fn ensure_latest_images() -> Result<(), Box<dyn std::error::Error>> {
