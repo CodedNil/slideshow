@@ -192,9 +192,10 @@ impl WgpuCtx<'_> {
         .unwrap();
 
         let size = window.inner_size();
-        let surface_config = surface
+        let mut surface_config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .unwrap();
+        surface_config.present_mode = wgpu::PresentMode::Mailbox;
         surface.configure(&device, &surface_config);
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
