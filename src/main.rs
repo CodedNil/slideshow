@@ -188,6 +188,7 @@ impl ApplicationHandler for App {
                         size.height as i32,
                     );
                 };
+                state.window.request_redraw();
             }
             WindowEvent::CloseRequested => event_loop.exit(),
             _ => (),
@@ -270,8 +271,8 @@ impl Renderer {
             println!("Shaders version on {}", shaders_version.to_string_lossy());
         }
 
-        // Create the shader program
-        let program = unsafe {
+        unsafe {
+            // Create the shader program
             let program = gl.CreateProgram();
             let vertex_shader = compile_shader(&gl, gl::VERTEX_SHADER, VERTEX_SHADER);
             let fragment_shader = compile_shader(&gl, gl::FRAGMENT_SHADER, FRAGMENT_SHADER);
@@ -281,11 +282,8 @@ impl Renderer {
             gl.UseProgram(program);
             gl.DeleteShader(vertex_shader);
             gl.DeleteShader(fragment_shader);
-            program
-        };
 
-        // Retrieve and set the uniform locations for the texture samplers
-        unsafe {
+            // Retrieve and set the uniform locations for the texture samplers
             gl.Uniform1i(
                 gl.GetUniformLocation(program, c"u_texture0".as_ptr().cast::<_>()),
                 0,
@@ -294,10 +292,8 @@ impl Renderer {
                 gl.GetUniformLocation(program, c"u_texture1".as_ptr().cast::<_>()),
                 1,
             );
-        }
 
-        // Create the vertex array object
-        let vao = unsafe {
+            // Create the vertex array object
             let (mut vao, mut vbo) = (0, 0);
             gl.GenVertexArrays(1, &mut vao);
             gl.BindVertexArray(vao);
@@ -324,29 +320,26 @@ impl Renderer {
                 (8 as *const ()).cast(),
             );
             gl.EnableVertexAttribArray(tex_attrib as u32);
-            vao
-        };
 
-        // Retrieve the location of the transition uniform
-        let transition_location =
-            unsafe { gl.GetUniformLocation(program, c"transition".as_ptr().cast::<_>()) };
+            // Retrieve the location of the transition uniform
+            let transition_location =
+                gl.GetUniformLocation(program, c"transition".as_ptr().cast::<_>());
 
-        // Load the textures
-        let mut textures = [0, 0];
-        unsafe {
+            // Load the textures
+            let mut textures = [0, 0];
             gl.GenTextures(2, textures.as_mut_ptr());
             gl.BindTexture(gl::TEXTURE_2D, textures[0]);
             load_texture_from_path(&gl, &image_paths[start_index]);
             gl.BindTexture(gl::TEXTURE_2D, textures[1]);
             load_texture_from_path(&gl, &image_paths[(start_index + 1) % image_paths.len()]);
-        }
 
-        Self {
-            program,
-            vao,
-            textures,
-            gl,
-            transition_location,
+            Self {
+                program,
+                vao,
+                textures,
+                gl,
+                transition_location,
+            }
         }
     }
 
