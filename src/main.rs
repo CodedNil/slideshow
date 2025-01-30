@@ -16,7 +16,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use wgpu::{LoadOp, PipelineCompilationOptions, ShaderSource, StoreOp};
+use wgpu::{LoadOp, PipelineCompilationOptions, Sampler, ShaderSource, StoreOp};
 use winit::{
     application::ApplicationHandler,
     error::EventLoopError,
@@ -118,9 +118,10 @@ struct WgpuCtx<'window> {
     render_pipeline: wgpu::RenderPipeline,
     front_texture: TextureResources,
     back_texture: TextureResources,
+    back_texture_size: (u32, u32),
+    texture_sampler: Sampler,
     texture_bind_group_layout: wgpu::BindGroupLayout,
     texture_bind_group: wgpu::BindGroup,
-    mix_factor_buffer: wgpu::Buffer,
     image_paths: Vec<String>,
     current_image_index: usize,
 }
@@ -136,11 +137,17 @@ impl WgpuCtx<'_> {
             force_fallback_adapter: false,
         }))
         .unwrap();
+
+        let mut limits =
+            wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits());
+        limits.max_push_constant_size = 16;
+        let mut features = wgpu::Features::default();
+        features.set(wgpu::Features::PUSH_CONSTANTS, true);
+
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
-                required_features: wgpu::Features::default(),
-                required_limits:
-                    wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
+                required_features: features,
+                required_limits: limits,
                 memory_hints: wgpu::MemoryHints::default(),
                 label: None,
             },
@@ -159,64 +166,50 @@ impl WgpuCtx<'_> {
             label: None,
         });
 
-        let texture_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            entries: &[
-                // Binding for the first texture
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    // Binding for the texture sampler
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
                     },
-                    count: None,
-                },
-                // Binding for the first sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // Binding for the second texture
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+                    // Binding for the first texture
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // Binding for the second sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // Binding for the mix factor uniform buffer
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<f32>() as _),
+                    // Binding for the second texture
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-            label: None,
-        });
+                ],
+                label: None,
+            });
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             layout: Some(
                 &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     bind_group_layouts: &[&texture_bind_group_layout],
-                    push_constant_ranges: &[],
+                    push_constant_ranges: &[wgpu::PushConstantRange {
+                        stages: wgpu::ShaderStages::FRAGMENT,
+                        range: 0..16,
+                    }],
                     label: None,
                 }),
             ),
@@ -263,19 +256,14 @@ impl WgpuCtx<'_> {
 
         let front_texture = create_texture_resources(&device, &queue, &current_image);
         let back_texture = create_texture_resources(&device, &queue, &next_image);
+        let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
 
-        let mix_factor_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            size: 8,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-            label: None,
-        });
         let texture_bind_group = update_bind_groups(
             &device,
             &texture_bind_group_layout,
             &front_texture,
             &back_texture,
-            &mix_factor_buffer,
+            &texture_sampler,
         );
 
         WgpuCtx {
@@ -286,9 +274,10 @@ impl WgpuCtx<'_> {
             render_pipeline,
             front_texture,
             back_texture,
+            back_texture_size: current_image.dimensions(),
+            texture_sampler,
             texture_bind_group_layout,
             texture_bind_group,
-            mix_factor_buffer,
             image_paths,
             current_image_index: 0,
         }
@@ -301,12 +290,23 @@ impl WgpuCtx<'_> {
         let next_image = image::open(img_path).unwrap();
         self.back_texture = create_texture_resources(&self.device, &self.queue, &next_image);
 
+        let (width, height) = next_image.dimensions();
+
+        if (width, height) == self.back_texture_size {
+            // Reuse existing texture
+            write_to_existing_texture(&self.queue, &self.back_texture.texture, &next_image);
+        } else {
+            // Create new texture
+            self.back_texture = create_texture_resources(&self.device, &self.queue, &next_image);
+            self.back_texture_size = (width, height);
+        }
+
         self.texture_bind_group = update_bind_groups(
             &self.device,
             &self.texture_bind_group_layout,
             &self.front_texture,
             &self.back_texture,
-            &self.mix_factor_buffer,
+            &self.texture_sampler,
         );
     }
 
@@ -322,12 +322,6 @@ impl WgpuCtx<'_> {
         if transition > 1.5 && !needs_update {
             return;
         }
-
-        self.queue.write_buffer(
-            &self.mix_factor_buffer,
-            0,
-            bytemuck::cast_slice(&[transition.min(1.0) as f32]),
-        );
 
         // Acquire the current texture for rendering
         let surface_texture = self.surface.get_current_texture().unwrap();
@@ -359,6 +353,12 @@ impl WgpuCtx<'_> {
             // Set up pipeline and bind groups
             rpass.set_pipeline(&self.render_pipeline);
             rpass.set_bind_group(0, &self.texture_bind_group, &[]);
+            rpass.set_push_constants(
+                wgpu::ShaderStages::FRAGMENT,
+                0,
+                bytemuck::cast_slice(&[transition.min(1.0) as f32]),
+            );
+
             rpass.draw(0..4, 0..1);
         }
 
@@ -373,34 +373,22 @@ fn update_bind_groups(
     texture_bind_group_layout: &wgpu::BindGroupLayout,
     front_texture: &TextureResources,
     back_texture: &TextureResources,
-    mix_factor_buffer: &wgpu::Buffer,
+    texture_sampler: &Sampler,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         layout: texture_bind_group_layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&front_texture.texture_view), // Front texture
+                resource: wgpu::BindingResource::Sampler(texture_sampler),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::Sampler(&front_texture.sampler), // Front sampler
+                resource: wgpu::BindingResource::TextureView(&front_texture.texture_view),
             },
             wgpu::BindGroupEntry {
                 binding: 2,
-                resource: wgpu::BindingResource::TextureView(&back_texture.texture_view), // Back texture
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: wgpu::BindingResource::Sampler(&back_texture.sampler), // Back sampler
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: mix_factor_buffer,
-                    offset: 0,
-                    size: None,
-                }), // Mix Factor
+                resource: wgpu::BindingResource::TextureView(&back_texture.texture_view),
             },
         ],
         label: None,
@@ -408,8 +396,8 @@ fn update_bind_groups(
 }
 
 struct TextureResources {
+    texture: wgpu::Texture,
     texture_view: wgpu::TextureView,
-    sampler: wgpu::Sampler,
 }
 
 fn create_texture_resources(
@@ -417,7 +405,6 @@ fn create_texture_resources(
     queue: &wgpu::Queue,
     image: &image::DynamicImage,
 ) -> TextureResources {
-    let rgba = image.to_rgba8();
     let (width, height) = image.dimensions();
     let texture_size = wgpu::Extent3d {
         width,
@@ -443,7 +430,7 @@ fn create_texture_resources(
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
-        &rgba,
+        &image.to_rgba8(),
         wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(4 * width),
@@ -453,12 +440,38 @@ fn create_texture_resources(
     );
 
     let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
 
     TextureResources {
+        texture,
         texture_view,
-        sampler,
     }
+}
+
+fn write_to_existing_texture(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    image: &image::DynamicImage,
+) {
+    let (width, height) = image.dimensions();
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &image.to_rgba8(),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4 * width),
+            rows_per_image: Some(height),
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
 }
 
 fn ensure_latest_images() -> Result<(), Box<dyn std::error::Error>> {

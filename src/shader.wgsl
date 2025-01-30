@@ -11,9 +11,9 @@ struct VertexOutput {
 fn vs_main(input: VertexInput) -> VertexOutput {
     var positions = array<vec2<f32>, 4>(
         vec2<f32>(-1.0, -1.0),  // Bottom-left
-        vec2<f32>( 1.0, -1.0),  // Bottom-right
-        vec2<f32>(-1.0,  1.0),  // Top-left
-        vec2<f32>( 1.0,  1.0)   // Top-right
+        vec2<f32>(1.0, -1.0),  // Bottom-right
+        vec2<f32>(-1.0, 1.0),  // Top-left
+        vec2<f32>(1.0, 1.0)   // Top-right
     );
 
     var tex_coords = array<vec2<f32>, 4>(
@@ -29,22 +29,28 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     return output;
 }
 
-@group(0) @binding(0) var front_texture: texture_2d<f32>;
-@group(0) @binding(1) var front_sampler: sampler;
+@group(0) @binding(0) var texture_sampler: sampler;
+@group(0) @binding(1) var front_texture: texture_2d<f32>;
 @group(0) @binding(2) var back_texture: texture_2d<f32>;
-@group(0) @binding(3) var back_sampler: sampler;
-@group(0) @binding(4) var<uniform> mix_factor: f32;
+@group(0) @binding(3) var<uniform> mix_factor: f32;
+
+struct PushConstants {
+    mix_factor: f32,
+};
+var<push_constant> push_constants: PushConstants;
+
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    let front_color = textureSample(front_texture, front_sampler, input.uv);
-    let back_color = textureSample(back_texture, back_sampler, input.uv);
+    let front_color = textureSample(front_texture, texture_sampler, input.uv);
+    let back_color = textureSample(back_texture, texture_sampler, input.uv);
+    let mix_factor = push_constants.mix_factor;
 
     // Directly return based on mix factor for simple cases
-    if (mix_factor <= 0.0) { 
+    if mix_factor <= 0.0 {
         return front_color;
     }
-    if (mix_factor >= 1.0) {
+    if mix_factor >= 1.0 {
         return back_color;
     }
 
