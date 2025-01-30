@@ -36,26 +36,3 @@ sudo systemctl enable sway.timer && sudo systemctl start sway.timer
 
 Setup auto login
 sudo bash -c 'mkdir -p /etc/systemd/system/getty@tty1.service.d && echo -e "[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin adept --noclear %I \$TERM" > /etc/systemd/system/getty@tty1.service.d/override.conf && systemctl daemon-reload && systemctl enable getty@tty1.service'
-
-
-sudo nano /boot/firmware/config.txt
-
-Pi Zero 2 OC
-arm_freq=1400 #1000
-core_freq=550 #400
-over_voltage=6 #0
-gpu_freq=550 #400
-
-Pi 3 OC
-gpu_mem=128
-kernel=zImage
-arm_freq=1450
-core_freq=550
-gpu_freq=525
-over_voltage=6
-force_turbo=1
-sdram_freq=625
-sdram_schmoo=0x02000020
-over_voltage_sdram_p=4
-over_voltage_sdram_i=3
-over_voltage_sdram_c=3
