@@ -288,11 +288,11 @@ impl Renderer {
         // Retrieve and set the uniform locations for the texture samplers
         unsafe {
             gl.Uniform1i(
-                gl.GetUniformLocation(program, c"u_texture0".as_ptr().cast::<i8>()),
+                gl.GetUniformLocation(program, c"u_texture0".as_ptr().cast::<_>()),
                 0,
             );
             gl.Uniform1i(
-                gl.GetUniformLocation(program, c"u_texture1".as_ptr().cast::<i8>()),
+                gl.GetUniformLocation(program, c"u_texture1".as_ptr().cast::<_>()),
                 1,
             );
         }
@@ -330,7 +330,7 @@ impl Renderer {
 
         // Retrieve the location of the transition uniform
         let transition_location =
-            unsafe { gl.GetUniformLocation(program, c"transition".as_ptr().cast::<i8>()) };
+            unsafe { gl.GetUniformLocation(program, c"transition".as_ptr().cast::<_>()) };
 
         // Load the textures
         let mut textures = [0, 0];
