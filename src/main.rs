@@ -195,28 +195,38 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        let start_time = Instant::now();
-
         let elapsed = self.start_time.elapsed().as_secs_f64();
         let cycle_position = elapsed % TIME_BETWEEN_IMAGES;
-        let transition_progress =
-            (cycle_position - (TIME_BETWEEN_IMAGES - TRANSITION_TIME)) / TRANSITION_TIME;
-        let next_image_index = ((elapsed / TIME_BETWEEN_IMAGES) as usize) % self.image_paths.len();
+        let in_transition = cycle_position >= (TIME_BETWEEN_IMAGES - TRANSITION_TIME);
 
-        let update_start = Instant::now();
-        if self.current_image_index != next_image_index {
-            println!("next_image_index: {next_image_index}");
-            self.current_image_index = next_image_index;
+        // Calculate next wake time
+        let next_wake = if in_transition {
+            // Wake more frequently during transition (every WAIT_TIME)
+            Instant::now() + WAIT_TIME
+        } else {
+            // Wake at transition start with small buffer
+            let next_transition =
+                elapsed - cycle_position + (TIME_BETWEEN_IMAGES - TRANSITION_TIME);
+            self.start_time + Duration::from_secs_f64(next_transition) + WAIT_TIME * 2
+        };
+
+        // Update image if needed
+        let next_image = ((elapsed / TIME_BETWEEN_IMAGES) as usize) % self.image_paths.len();
+        if self.current_image_index != next_image {
+            self.current_image_index = next_image;
             if let Some(renderer) = &mut self.renderer {
                 renderer.update_textures(&self.image_paths, self.current_image_index);
             }
         }
-        let update_duration = update_start.elapsed();
 
-        let draw_start = Instant::now();
+        // Draw image
         if let Some(state) = &self.state {
             if let Some(renderer) = &mut self.renderer {
-                renderer.draw(transition_progress.clamp(0.0, 1.0) as f32);
+                renderer.draw(
+                    (((elapsed % TIME_BETWEEN_IMAGES) - (TIME_BETWEEN_IMAGES - TRANSITION_TIME))
+                        / TRANSITION_TIME)
+                        .clamp(0.0, 1.0) as f32,
+                );
             }
             state.window.request_redraw();
             state
@@ -224,19 +234,8 @@ impl ApplicationHandler for App {
                 .swap_buffers(self.gl_context.as_ref().unwrap())
                 .unwrap();
         }
-        let draw_duration = draw_start.elapsed();
 
-        let next_wake =
-            self.start_time + Duration::from_secs_f64(elapsed + WAIT_TIME.as_secs_f64());
         event_loop.set_control_flow(ControlFlow::WaitUntil(next_wake));
-
-        let total_duration = start_time.elapsed();
-        println!(
-            "Frame times: {:.2}ms (update: {:.2}ms, draw: {:.2}ms)",
-            total_duration.as_secs_f64() * 1000.0,
-            update_duration.as_secs_f64() * 1000.0,
-            draw_duration.as_secs_f64() * 1000.0
-        );
     }
 }
 

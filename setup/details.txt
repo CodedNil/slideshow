@@ -26,7 +26,7 @@ scp ~/Downloads/slideshow adept@adept-pi3.local:/home/adept
 mkdir -p ~/.config/sway && nano ~/.config/sway/config
 
 sudo apt update && sudo apt upgrade && sudo apt dist-upgrade
-sudo apt install sway seatd mesa-vulkan-drivers
+sudo apt install sway seatd libwayland-egl1-mesa
 sudo usermod -aG video,input,tty adept
 
 sudo nano /etc/systemd/system/sway.service

@@ -5,8 +5,6 @@ edition = "2021"
 
 [dependencies]
 mimalloc = "0.1.43"
-# bytemuck = "1.21.0"
-# pollster = "0.4.0"
 
 winit = { version = "0.30.8", default-features = false, features = [
     "wayland",
@@ -18,9 +16,6 @@ glutin-winit = { version = "0.5.0", default-features = false, features = [
     "egl",
 ] }
 raw-window-handle = "0.6.2"
-drm = "0.14.1"
-
-# wgpu = { version = "24.0.1", default-features = false, features = ["wgsl"] }
 
 image = { version = "0.25.5", default-features = false, features = ["jpeg"] }
 reqwest = { version = "0.12.12", default-features = false, features = [
