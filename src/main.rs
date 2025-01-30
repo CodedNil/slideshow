@@ -42,10 +42,10 @@ const IMAGE_ZIP_URL: &str = "http://m.adept.care/display_tv/MH.zip";
 const IMAGE_ZIP_PATH: &str = "images.zip";
 const IMAGE_DIR_PATH: &str = "images";
 
-const TIME_BETWEEN_IMAGES: f64 = 3.0;
+const TIME_BETWEEN_IMAGES: f64 = 10.0;
 const TRANSITION_TIME: f64 = 1.0;
 
-const WAIT_TIME: Duration = Duration::from_millis(66); // Frame time between refreshes
+const WAIT_TIME: Duration = Duration::from_millis(50); // Frame time between refreshes
 
 pub mod gl {
     include!(concat!(env!("OUT_DIR"), "/gl_bindings.rs"));
@@ -381,7 +381,7 @@ impl Renderer {
 
             self.gl.ClearColor(0.0, 0.0, 0.0, 1.0);
             self.gl.Clear(gl::COLOR_BUFFER_BIT);
-            self.gl.DrawArrays(gl::TRIANGLES, 0, 6);
+            self.gl.DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
         }
     }
 }
@@ -428,13 +428,11 @@ fn get_gl_string(gl: &gl::Gl, variant: GLenum) -> Option<&'static CStr> {
 }
 
 #[rustfmt::skip]
-static VERTEX_DATA: [f32; 24] = [
-    -1.0, -1.0, 0.0, 0.0,
-     1.0, -1.0, 1.0, 0.0,
-     1.0,  1.0, 1.0, 1.0,
-    -1.0, -1.0, 0.0, 0.0,
-     1.0,  1.0, 1.0, 1.0,
-    -1.0,  1.0, 0.0, 1.0,
+static VERTEX_DATA: [f32; 16] = [
+    -1.0, -1.0, 0.0, 0.0, // Bottom-left
+     1.0, -1.0, 1.0, 0.0, // Bottom-right
+    -1.0,  1.0, 0.0, 1.0, // Top-left
+     1.0,  1.0, 1.0, 1.0, // Top-right
 ];
 
 const VERTEX_SHADER: &[u8] = b"

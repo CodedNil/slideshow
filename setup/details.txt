@@ -31,8 +31,6 @@ sudo usermod -aG video,input,tty adept
 
 sudo nano /etc/systemd/system/sway.service
 sudo systemctl enable sway.service && sudo systemctl start sway.service
-sudo nano /etc/systemd/system/sway.timer
-sudo systemctl enable sway.timer && sudo systemctl start sway.timer
 
 Setup auto login
 sudo bash -c 'mkdir -p /etc/systemd/system/getty@tty1.service.d && echo -e "[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin adept --noclear %I \$TERM" > /etc/systemd/system/getty@tty1.service.d/override.conf && systemctl daemon-reload && systemctl enable getty@tty1.service'
