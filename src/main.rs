@@ -4,8 +4,7 @@
     clippy::cast_possible_wrap,
     clippy::cast_sign_loss,
     clippy::cast_possible_truncation,
-    clippy::similar_names,
-    clippy::too_many_lines
+    clippy::similar_names
 )]
 
 #[global_allocator]
@@ -29,6 +28,7 @@ use std::{
     path::Path,
     time::{Duration, Instant},
 };
+use ureq::{tls::TlsConfig, Agent};
 use winit::{
     application::ApplicationHandler,
     error::EventLoopError,
@@ -464,13 +464,12 @@ fn ensure_latest_images() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Download ZIP
-    let client = reqwest::blocking::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .build()?;
-    let bytes = client.get(IMAGE_ZIP_URL).send()?.bytes()?;
+    // Download ZIP using ureq
+    let tls_config = TlsConfig::builder().disable_verification(true).build();
+    let agent = Agent::from(Agent::config_builder().tls_config(tls_config).build());
+    let bytes = agent.get(IMAGE_ZIP_URL).call()?.body_mut().read_to_vec()?;
 
-    // Write the ZIP archive to disk
+    // Write the ZIP to disk
     fs::write(zip_path, &bytes)?;
 
     // Clear the images directory
