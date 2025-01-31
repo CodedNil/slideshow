@@ -10,6 +10,7 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+use anyhow::Result;
 use gl::types::{GLfloat, GLint, GLuint};
 use glutin::{
     config::{ConfigTemplateBuilder, GetGlConfig},
@@ -19,11 +20,13 @@ use glutin::{
     surface::{GlSurface, Surface, SurfaceAttributesBuilder, SwapInterval, WindowSurface},
 };
 use glutin_winit::{DisplayBuilder, GlWindow};
+use image::{DynamicImage, RgbaImage};
+use pdfium_render::prelude::{PdfRenderConfig, Pdfium};
 use raw_window_handle::HasWindowHandle;
 use std::{
     ffi::{CStr, CString},
-    fs,
-    io::Cursor,
+    fs::{self, File},
+    io::{self, BufReader},
     num::NonZeroU32,
     path::Path,
     time::{Duration, Instant},
@@ -36,10 +39,9 @@ use winit::{
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Window, WindowAttributes},
 };
-use zip::ZipArchive;
 
-const IMAGE_ZIP_URL: &str = "http://m.adept.care/display_tv/MH.zip";
-const IMAGE_ZIP_PATH: &str = "images.zip";
+const IMAGE_PDF_URL: &str = "http://m.adept.care/display_tv/MH.pdf";
+const IMAGE_PDF_PATH: &str = "images.pdf";
 const IMAGE_DIR_PATH: &str = "images";
 
 const TIME_BETWEEN_IMAGES: f64 = 10.0;
@@ -440,23 +442,30 @@ void main() {
 /// Ensures the latest images are available from the server and unpacks them to a directory.
 ///
 /// If the images have been updated in the last hour, this does nothing.
-/// Otherwise, it downloads the latest images from `IMAGE_ZIP_URL`, unpacks them to `IMAGE_DIR_PATH`
-fn ensure_latest_images() -> Result<(), Box<dyn std::error::Error>> {
-    let zip_path = Path::new(IMAGE_ZIP_PATH);
-    if zip_path.exists() {
-        let modified = fs::metadata(zip_path)?.modified()?;
-        if modified.elapsed()? <= Duration::from_secs(3600) {
-            return Ok(());
-        }
-    }
+/// Otherwise, it downloads the latest images from `IMAGE_PDF_URL`, unpacks them to `IMAGE_DIR_PATH`
+fn ensure_latest_images() -> Result<()> {
+    let pdf_path = Path::new(IMAGE_PDF_PATH);
+    // if pdf_path.exists() {
+    //     let modified = fs::metadata(pdf_path)?.modified()?;
+    //     if modified.elapsed()? <= Duration::from_secs(3600) {
+    //         return Ok(());
+    //     }
+    // }
 
-    // Download ZIP using ureq
+    // Download PDF using ureq
     let tls_config = TlsConfig::builder().disable_verification(true).build();
     let agent = Agent::from(Agent::config_builder().tls_config(tls_config).build());
-    let bytes = agent.get(IMAGE_ZIP_URL).call()?.body_mut().read_to_vec()?;
+    let mut res = agent.get(IMAGE_PDF_URL).call()?;
+    let mut reader = BufReader::new(
+        res.body_mut()
+            .with_config()
+            .limit(30 * 1024 * 1024)
+            .reader(),
+    );
 
-    // Write the ZIP to disk
-    fs::write(zip_path, &bytes)?;
+    // Write the PDF to disk
+    let mut file = File::create(pdf_path)?;
+    io::copy(&mut reader, &mut file)?;
 
     // Clear the images directory
     if Path::new(IMAGE_DIR_PATH).exists() {
@@ -464,11 +473,19 @@ fn ensure_latest_images() -> Result<(), Box<dyn std::error::Error>> {
     }
     fs::create_dir_all(IMAGE_DIR_PATH)?;
 
-    let mut zip = ZipArchive::new(Cursor::new(bytes))?;
-    for i in 0..zip.len() {
-        let mut file = zip.by_index(i)?;
-        let mut outfile = fs::File::create(Path::new(IMAGE_DIR_PATH).join(file.name()))?;
-        std::io::copy(&mut file, &mut outfile)?;
+    // Load the pdf and export each page as a bmp
+    let pdfium = Pdfium::default();
+    let document = pdfium.load_pdf_from_file(pdf_path, None)?;
+    for (index, page) in document.pages().iter().enumerate() {
+        let page = page.render_with_config(&PdfRenderConfig::new().set_target_width(1920))?;
+        RgbaImage::from_raw(
+            page.width() as u32,
+            page.height() as u32,
+            page.as_rgba_bytes(),
+        )
+        .map(DynamicImage::ImageRgba8)
+        .unwrap()
+        .save_with_format(format!("images/{index}.bmp"), image::ImageFormat::Bmp)?;
     }
 
     Ok(())
