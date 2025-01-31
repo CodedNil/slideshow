@@ -57,13 +57,17 @@ pub mod gl {
 pub fn main() -> Result<(), EventLoopError> {
     // Grab new images on startup
     ensure_latest_images().unwrap();
-    let image_paths = fs::read_dir(IMAGE_DIR_PATH)
+    let mut image_paths = fs::read_dir(IMAGE_DIR_PATH)
         .unwrap()
         .filter_map(|e| {
             e.ok()
                 .and_then(|e| e.path().to_str().map(std::borrow::ToOwned::to_owned))
         })
         .collect::<Vec<_>>();
+    image_paths.sort_by_key(|s| {
+        let first = s.split('/').last().unwrap();
+        first.split('.').next().unwrap().parse::<usize>().unwrap()
+    });
 
     // Start the event loop
     let event_loop = EventLoop::new().unwrap();

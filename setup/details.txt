@@ -23,6 +23,8 @@ adept
 ssh adept@adept-pi3.local "rm /home/adept/slideshow"
 scp ~/Downloads/slideshow adept@adept-pi3.local:/home/adept
 
+scp ~/Downloads/libpdfium.so adept@adept-pi3.local:/home/adept
+
 mkdir -p ~/.config/sway && nano ~/.config/sway/config
 
 sudo apt update && sudo apt upgrade && sudo apt dist-upgrade
