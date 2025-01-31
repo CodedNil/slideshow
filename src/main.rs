@@ -10,7 +10,7 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use gl::types::{GLenum, GLfloat, GLint, GLuint};
+use gl::types::{GLfloat, GLint, GLuint};
 use glutin::{
     config::{ConfigTemplateBuilder, GetGlConfig},
     context::{ContextApi, ContextAttributesBuilder, PossiblyCurrentContext},
@@ -57,7 +57,10 @@ pub fn main() -> Result<(), EventLoopError> {
     ensure_latest_images().unwrap();
     let image_paths = fs::read_dir(IMAGE_DIR_PATH)
         .unwrap()
-        .filter_map(|entry| entry.ok().map(|e| e.path().to_str().unwrap().to_owned()))
+        .filter_map(|e| {
+            e.ok()
+                .and_then(|e| e.path().to_str().map(std::borrow::ToOwned::to_owned))
+        })
         .collect::<Vec<_>>();
 
     // Start the event loop
@@ -93,9 +96,7 @@ struct AppState {
 }
 
 enum GlDisplayCreationState {
-    /// The display was not build yet.
     Builder(DisplayBuilder),
-    /// The display was already created for the application.
     Init,
 }
 
@@ -200,17 +201,6 @@ impl ApplicationHandler for App {
         let cycle_position = elapsed % TIME_BETWEEN_IMAGES;
         let in_transition = cycle_position >= (TIME_BETWEEN_IMAGES - TRANSITION_TIME);
 
-        // Calculate next wake time
-        let next_wake = if in_transition {
-            // Wake more frequently during transition (every WAIT_TIME)
-            Instant::now() + WAIT_TIME
-        } else {
-            // Wake at transition start with small buffer
-            let next_transition =
-                elapsed - cycle_position + (TIME_BETWEEN_IMAGES - TRANSITION_TIME);
-            self.start_time + Duration::from_secs_f64(next_transition) + WAIT_TIME * 2
-        };
-
         // Update image if needed
         let next_image = ((elapsed / TIME_BETWEEN_IMAGES) as usize) % self.image_paths.len();
         if self.current_image_index != next_image {
@@ -236,7 +226,16 @@ impl ApplicationHandler for App {
                 .unwrap();
         }
 
-        event_loop.set_control_flow(ControlFlow::WaitUntil(next_wake));
+        // Calculate next wake time
+        event_loop.set_control_flow(ControlFlow::WaitUntil(if in_transition {
+            // Wake more frequently during transition (every WAIT_TIME)
+            Instant::now() + WAIT_TIME
+        } else {
+            // Wake at transition start with small buffer
+            let next_transition =
+                elapsed - cycle_position + (TIME_BETWEEN_IMAGES - TRANSITION_TIME);
+            self.start_time + Duration::from_secs_f64(next_transition) + WAIT_TIME * 2
+        }));
     }
 }
 
@@ -251,7 +250,7 @@ pub struct Renderer {
     vao: gl::types::GLuint,
     textures: [GLuint; 2],
     gl: gl::Gl,
-    transition_location: GLint,
+    transition_loc: GLint,
 }
 
 impl Renderer {
@@ -261,27 +260,41 @@ impl Renderer {
                 .get_proc_address(CString::new(s).unwrap().as_c_str())
                 .cast()
         });
-        if let Some(renderer) = get_gl_string(&gl, gl::RENDERER) {
-            println!("Running on {}", renderer.to_string_lossy());
-        }
-        if let Some(version) = get_gl_string(&gl, gl::VERSION) {
-            println!("OpenGL Version {}", version.to_string_lossy());
-        }
-        if let Some(shaders_version) = get_gl_string(&gl, gl::SHADING_LANGUAGE_VERSION) {
-            println!("Shaders version on {}", shaders_version.to_string_lossy());
+        for (param, prefix) in [
+            (gl::RENDERER, "Running on"),
+            (gl::VERSION, "OpenGL Version"),
+            (gl::SHADING_LANGUAGE_VERSION, "Shaders version"),
+        ] {
+            if let Some(s) = {
+                unsafe {
+                    let s = gl.GetString(param);
+                    (!s.is_null()).then(|| CStr::from_ptr(s.cast()))
+                }
+            } {
+                println!("{} {}", prefix, s.to_string_lossy());
+            }
         }
 
         unsafe {
             // Create the shader program
             let program = gl.CreateProgram();
-            let vertex_shader = compile_shader(&gl, gl::VERTEX_SHADER, VERTEX_SHADER);
-            let fragment_shader = compile_shader(&gl, gl::FRAGMENT_SHADER, FRAGMENT_SHADER);
-            gl.AttachShader(program, vertex_shader);
-            gl.AttachShader(program, fragment_shader);
+            for (shader_type, source) in [
+                (gl::VERTEX_SHADER, VERTEX_SHADER),
+                (gl::FRAGMENT_SHADER, FRAGMENT_SHADER),
+            ] {
+                let shader = gl.CreateShader(shader_type);
+                gl.ShaderSource(
+                    shader,
+                    1,
+                    [source.as_ptr().cast()].as_ptr(),
+                    std::ptr::null(),
+                );
+                gl.CompileShader(shader);
+                gl.AttachShader(program, shader);
+                gl.DeleteShader(shader);
+            }
             gl.LinkProgram(program);
             gl.UseProgram(program);
-            gl.DeleteShader(vertex_shader);
-            gl.DeleteShader(fragment_shader);
 
             // Retrieve and set the uniform locations for the texture samplers
             gl.Uniform1i(
@@ -293,10 +306,11 @@ impl Renderer {
                 1,
             );
 
-            // Create the vertex array object
-            let (mut vao, mut vbo) = (0, 0);
+            // Create the vertex array
+            let mut vao = 0;
             gl.GenVertexArrays(1, &mut vao);
             gl.BindVertexArray(vao);
+            let mut vbo = 0;
             gl.GenBuffers(1, &mut vbo);
             gl.BindBuffer(gl::ARRAY_BUFFER, vbo);
             gl.BufferData(
@@ -305,48 +319,42 @@ impl Renderer {
                 VERTEX_DATA.as_ptr().cast(),
                 gl::STATIC_DRAW,
             );
-
-            let pos_attrib = gl.GetAttribLocation(program, c"position".as_ptr().cast());
-            gl.VertexAttribPointer(pos_attrib as u32, 2, gl::FLOAT, 0, 16, std::ptr::null());
-            gl.EnableVertexAttribArray(pos_attrib as u32);
-
-            let tex_attrib = gl.GetAttribLocation(program, c"tex_coord".as_ptr().cast());
-            gl.VertexAttribPointer(
-                tex_attrib as u32,
-                2,
-                gl::FLOAT,
-                0,
-                16,
-                (8 as *const ()).cast(),
-            );
-            gl.EnableVertexAttribArray(tex_attrib as u32);
+            for (name, offset) in [
+                (c"position", std::ptr::null()),
+                (c"tex_coord", (8 as *const ()).cast()),
+            ] {
+                let loc = gl.GetAttribLocation(program, name.as_ptr().cast());
+                gl.VertexAttribPointer(loc as u32, 2, gl::FLOAT, 0, 16, offset);
+                gl.EnableVertexAttribArray(loc as u32);
+            }
 
             // Retrieve the location of the transition uniform
-            let transition_location =
-                gl.GetUniformLocation(program, c"transition".as_ptr().cast::<_>());
+            let transition_loc = gl.GetUniformLocation(program, c"transition".as_ptr().cast::<_>());
 
             // Load the textures
             let mut textures = [0, 0];
             gl.GenTextures(2, textures.as_mut_ptr());
-            gl.BindTexture(gl::TEXTURE_2D, textures[0]);
-            load_texture_from_path(&gl, &image_paths[start_index]);
-            gl.BindTexture(gl::TEXTURE_2D, textures[1]);
-            load_texture_from_path(&gl, &image_paths[(start_index + 1) % image_paths.len()]);
+            for (index, image_index) in [
+                (textures[0], start_index),
+                (textures[1], (start_index + 1) % image_paths.len()),
+            ] {
+                gl.BindTexture(gl::TEXTURE_2D, index);
+                load_texture_from_path(&gl, &image_paths[image_index]);
+            }
 
             Self {
                 program,
                 vao,
                 textures,
                 gl,
-                transition_location,
+                transition_loc,
             }
         }
     }
 
     pub fn update_textures(&mut self, image_paths: &[String], current_index: usize) {
+        self.textures.swap(0, 1);
         unsafe {
-            self.textures = (self.textures[1], self.textures[0]).into();
-
             self.gl.DeleteTextures(1, &self.textures[1]);
             self.gl.GenTextures(1, &mut self.textures[1]);
             self.gl.BindTexture(gl::TEXTURE_2D, self.textures[1]);
@@ -360,17 +368,14 @@ impl Renderer {
     pub fn draw(&self, transition_value: GLfloat) {
         unsafe {
             self.gl.UseProgram(self.program);
-
             self.gl.BindVertexArray(self.vao);
 
-            self.gl.ActiveTexture(gl::TEXTURE0);
-            self.gl.BindTexture(gl::TEXTURE_2D, self.textures[0]);
+            for (i, &texture) in self.textures.iter().enumerate() {
+                self.gl.ActiveTexture(gl::TEXTURE0 + i as u32);
+                self.gl.BindTexture(gl::TEXTURE_2D, texture);
+            }
 
-            self.gl.ActiveTexture(gl::TEXTURE1);
-            self.gl.BindTexture(gl::TEXTURE_2D, self.textures[1]);
-
-            self.gl
-                .Uniform1f(self.transition_location, transition_value);
+            self.gl.Uniform1f(self.transition_loc, transition_value);
 
             self.gl.ClearColor(0.0, 0.0, 0.0, 1.0);
             self.gl.Clear(gl::COLOR_BUFFER_BIT);
@@ -398,25 +403,6 @@ fn load_texture_from_path(gl: &gl::Gl, path: &str) {
         gl.TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
         gl.TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
         gl.TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
-    }
-}
-
-unsafe fn compile_shader(gl: &gl::Gl, ty: u32, source: &[u8]) -> GLuint {
-    let shader = gl.CreateShader(ty);
-    gl.ShaderSource(
-        shader,
-        1,
-        [source.as_ptr().cast()].as_ptr(),
-        std::ptr::null(),
-    );
-    gl.CompileShader(shader);
-    shader
-}
-
-fn get_gl_string(gl: &gl::Gl, variant: GLenum) -> Option<&'static CStr> {
-    unsafe {
-        let s = gl.GetString(variant);
-        (!s.is_null()).then(|| CStr::from_ptr(s.cast()))
     }
 }
 
