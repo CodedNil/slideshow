@@ -20,8 +20,9 @@ adept-pi5
 ssh adept@adept-pi3.local
 adept
 
-ssh adept@adept-pi3.local "rm /home/adept/slideshow"
-scp ~/Downloads/slideshow adept@adept-pi3.local:/home/adept
+ssh adept@adept-piz2.local "rm /home/adept/slideshow" && scp ~/Downloads/slideshow adept@adept-piz2.local:/home/adept
+ssh adept@adept-pi3.local "rm /home/adept/slideshow" && scp ~/Downloads/slideshow adept@adept-pi3.local:/home/adept
+ssh adept@adept-pi5.local "rm /home/adept/slideshow" && scp ~/Downloads/slideshow adept@adept-pi5.local:/home/adept
 
 scp ~/Downloads/libpdfium.so adept@adept-pi3.local:/home/adept
 

@@ -449,12 +449,12 @@ void main() {
 /// Otherwise, it downloads the latest images from `IMAGE_PDF_URL`, unpacks them to `IMAGE_DIR_PATH`
 fn ensure_latest_images() -> Result<()> {
     let pdf_path = Path::new(IMAGE_PDF_PATH);
-    // if pdf_path.exists() {
-    //     let modified = fs::metadata(pdf_path)?.modified()?;
-    //     if modified.elapsed()? <= Duration::from_secs(3600) {
-    //         return Ok(());
-    //     }
-    // }
+    if pdf_path.exists() {
+        let modified = fs::metadata(pdf_path)?.modified()?;
+        if modified.elapsed()? <= Duration::from_secs(3600) {
+            return Ok(());
+        }
+    }
 
     // Download PDF using ureq
     let tls_config = TlsConfig::builder().disable_verification(true).build();
@@ -477,7 +477,7 @@ fn ensure_latest_images() -> Result<()> {
     }
     fs::create_dir_all(IMAGE_DIR_PATH)?;
 
-    // Load the pdf and export each page as a bmp
+    // Load the pdf and export each page as an image
     let pdfium = Pdfium::default();
     let document = pdfium.load_pdf_from_file(pdf_path, None)?;
     for (index, page) in document.pages().iter().enumerate() {
@@ -489,7 +489,8 @@ fn ensure_latest_images() -> Result<()> {
         )
         .map(DynamicImage::ImageRgba8)
         .unwrap()
-        .save_with_format(format!("images/{index}.bmp"), image::ImageFormat::Bmp)?;
+        .to_rgb8()
+        .save(&format!("{IMAGE_DIR_PATH}/{index}.bmp"))?;
     }
 
     Ok(())
