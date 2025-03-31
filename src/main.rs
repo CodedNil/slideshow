@@ -1,10 +1,8 @@
 #![allow(
-    clippy::missing_errors_doc,
     clippy::missing_panics_doc,
     clippy::cast_possible_wrap,
     clippy::cast_sign_loss,
-    clippy::cast_possible_truncation,
-    clippy::similar_names
+    clippy::cast_possible_truncation
 )]
 
 #[global_allocator]
@@ -13,7 +11,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use anyhow::Result;
 use gl::types::{GLfloat, GLint, GLuint};
 use glutin::{
-    config::{ConfigTemplateBuilder, GetGlConfig},
+    config::ConfigTemplateBuilder,
     context::{ContextApi, ContextAttributesBuilder, PossiblyCurrentContext},
     display::GetGlDisplay,
     prelude::{GlDisplay, NotCurrentGlContext},
@@ -34,10 +32,9 @@ use std::{
 use ureq::{tls::TlsConfig, Agent};
 use winit::{
     application::ApplicationHandler,
-    error::EventLoopError,
     event::WindowEvent,
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    window::{Window, WindowAttributes},
+    window::Window,
 };
 
 const IMAGE_PDF_URL: &str = "http://m.adept.care/display_tv/MH.pdf";
@@ -54,7 +51,7 @@ pub mod gl {
     pub use Gles2 as Gl;
 }
 
-pub fn main() -> Result<(), EventLoopError> {
+pub fn main() {
     // Grab new images on startup
     ensure_latest_images().unwrap();
     let mut image_paths = fs::read_dir(IMAGE_DIR_PATH)
@@ -71,26 +68,24 @@ pub fn main() -> Result<(), EventLoopError> {
 
     // Start the event loop
     let event_loop = EventLoop::new().unwrap();
-    event_loop.run_app(&mut App {
-        template: ConfigTemplateBuilder::new(),
-        gl_display: GlDisplayCreationState::Builder(
-            DisplayBuilder::new().with_window_attributes(Some(window_attributes())),
-        ),
+    if let Err(e) = event_loop.run_app(&mut App {
+        gl_display: None,
         gl_context: None,
         state: None,
         renderer: None,
         image_paths,
         current_image_index: 0,
         start_time: Instant::now(),
-    })
+    }) {
+        eprintln!("Error: {e}");
+    }
 }
 
 struct App {
-    template: ConfigTemplateBuilder,
     renderer: Option<Renderer>,
     state: Option<AppState>,
     gl_context: Option<PossiblyCurrentContext>,
-    gl_display: GlDisplayCreationState,
+    gl_display: Option<glutin_winit::DisplayBuilder>,
     image_paths: Vec<String>,
     current_image_index: usize,
     start_time: Instant,
@@ -101,41 +96,33 @@ struct AppState {
     window: Window,
 }
 
-enum GlDisplayCreationState {
-    Builder(DisplayBuilder),
-    Init,
-}
-
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let (window, gl_config) = match &self.gl_display {
-            GlDisplayCreationState::Builder(builder) => {
-                let (window, config) = builder
-                    .clone()
-                    .build(event_loop, self.template.clone(), |mut configs| {
-                        configs.next().unwrap()
-                    })
-                    .unwrap();
-                self.gl_display = GlDisplayCreationState::Init;
-                (window.unwrap(), config)
-            }
-            GlDisplayCreationState::Init => {
-                let gl_config = self.gl_context.as_ref().unwrap().config();
-                let window =
-                    glutin_winit::finalize_window(event_loop, window_attributes(), &gl_config)
-                        .unwrap();
-                (window, gl_config)
-            }
-        };
+        let display_builder = self.gl_display.take().unwrap_or_else(|| {
+            DisplayBuilder::new().with_window_attributes(Some(
+                Window::default_attributes()
+                    .with_title("Slideshow")
+                    .with_fullscreen(Some(winit::window::Fullscreen::Borderless(None))),
+            ))
+        });
 
+        // Build window and GL config
+        let (window, gl_config) = display_builder
+            .build(event_loop, ConfigTemplateBuilder::new(), |mut configs| {
+                configs.next().unwrap()
+            })
+            .expect("Failed to create window and GL config");
+        let window = window.unwrap();
+
+        // Create GL surface
         let attrs = window
             .build_surface_attributes(SurfaceAttributesBuilder::default())
-            .unwrap();
+            .expect("Failed to build surface attributes");
         let gl_surface = unsafe {
             gl_config
                 .display()
                 .create_window_surface(&gl_config, &attrs)
-                .unwrap()
+                .expect("Failed to create GL surface")
         };
 
         // Create context with GLES
@@ -245,12 +232,6 @@ impl ApplicationHandler for App {
     }
 }
 
-fn window_attributes() -> WindowAttributes {
-    Window::default_attributes()
-        .with_title("Slideshow")
-        .with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)))
-}
-
 pub struct Renderer {
     program: GLuint,
     vao: gl::types::GLuint,
@@ -313,12 +294,12 @@ impl Renderer {
             );
 
             // Create the vertex array
-            let mut vao = 0;
-            gl.GenVertexArrays(1, &mut vao);
-            gl.BindVertexArray(vao);
-            let mut vbo = 0;
-            gl.GenBuffers(1, &mut vbo);
-            gl.BindBuffer(gl::ARRAY_BUFFER, vbo);
+            let mut vertex_array_object = 0;
+            gl.GenVertexArrays(1, &mut vertex_array_object);
+            gl.BindVertexArray(vertex_array_object);
+            let mut vertex_buffer_object = 0;
+            gl.GenBuffers(1, &mut vertex_buffer_object);
+            gl.BindBuffer(gl::ARRAY_BUFFER, vertex_buffer_object);
             gl.BufferData(
                 gl::ARRAY_BUFFER,
                 (VERTEX_DATA.len() * std::mem::size_of::<f32>()) as isize,
@@ -350,7 +331,7 @@ impl Renderer {
 
             Self {
                 program,
-                vao,
+                vao: vertex_array_object,
                 textures,
                 gl,
                 transition_loc,
