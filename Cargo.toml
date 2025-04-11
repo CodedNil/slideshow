@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-mimalloc = "0.1.44"
+mimalloc = "0.1.46"
 anyhow = "1.0.97"
 
 winit = { version = "0.30.9", default-features = false }
